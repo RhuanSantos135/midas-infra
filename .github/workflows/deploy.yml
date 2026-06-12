@@ -14,6 +14,7 @@ jobs:
 
     env:
       AWS_REGION: sa-east-1
+      STACK_NAME: MidasBackendStack
 
     steps:
       - name: Checkout
@@ -45,13 +46,15 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Verify AWS Access
-        run: aws sts get-caller-identity
+        run: |
+          aws sts get-caller-identity
 
       - name: Discover AWS Account
         id: account
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+          echo "Using account: $ACCOUNT_ID"
 
       - name: Check Bootstrap
         id: bootstrap
@@ -68,16 +71,59 @@ jobs:
         run: |
           cdk bootstrap aws://${{ steps.account.outputs.account_id }}/${{ env.AWS_REGION }}
 
+      - name: Check Existing Stack
+        continue-on-error: true
+        run: |
+          STATUS=$(aws cloudformation describe-stacks \
+            --stack-name $STACK_NAME \
+            --region $AWS_REGION \
+            --query "Stacks[0].StackStatus" \
+            --output text 2>/dev/null || echo "NOT_FOUND")
+
+          echo "Current status: $STATUS"
+
+          if [[ "$STATUS" == "CREATE_IN_PROGRESS" ]] || \
+             [[ "$STATUS" == "ROLLBACK_COMPLETE" ]] || \
+             [[ "$STATUS" == "CREATE_FAILED" ]] || \
+             [[ "$STATUS" == "ROLLBACK_FAILED" ]] || \
+             [[ "$STATUS" == "UPDATE_ROLLBACK_COMPLETE" ]]; then
+
+            echo "Deleting broken stack..."
+
+            aws cloudformation delete-stack \
+              --stack-name $STACK_NAME \
+              --region $AWS_REGION
+
+            aws cloudformation wait stack-delete-complete \
+              --stack-name $STACK_NAME \
+              --region $AWS_REGION
+
+            echo "Stack deleted."
+          fi
+
+      - name: Verify CDK Installation
+        run: |
+          python -c "import aws_cdk; print('AWS CDK OK')"
+
       - name: CDK Synth
-        run: cdk synth
+        run: |
+          cdk synth
 
       - name: CDK Deploy
         run: |
           cdk deploy --all --require-approval never
 
+      - name: List ECS Services
+        if: success()
+        run: |
+          aws ecs list-services \
+            --cluster midas-cluster \
+            --region $AWS_REGION || true
+
       - name: Show CloudFormation Events
         if: failure()
         run: |
           aws cloudformation describe-stack-events \
-            --stack-name MidasBackendStack \
-            --max-items 20
+            --stack-name $STACK_NAME \
+            --region $AWS_REGION \
+            --max-items 50
