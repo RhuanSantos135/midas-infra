@@ -4,17 +4,17 @@ on:
   workflow_dispatch:
 
 jobs:
-
   deploy:
-
     runs-on: ubuntu-latest
 
     permissions:
       id-token: write
       contents: read
 
-    steps:
+    env:
+      AWS_REGION: sa-east-1
 
+    steps:
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -23,23 +23,65 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Install CDK
         run: |
           npm install -g aws-cdk
 
-      - name: Install Dependencies
+      - name: Install Python Dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Configure AWS
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: sa-east-1
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify AWS Access
+        run: |
+          aws sts get-caller-identity
+
+      - name: Discover AWS Account
+        id: account
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+          echo "AWS Account: $ACCOUNT_ID"
+
+      - name: Check Bootstrap
+        id: bootstrap
+        run: |
+          if aws ssm get-parameter \
+            --name /cdk-bootstrap/hnb659fds/version >/dev/null 2>&1; then
+            echo "bootstrap_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "bootstrap_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: CDK Bootstrap
+        if: steps.bootstrap.outputs.bootstrap_exists == 'false'
+        run: |
+          cdk bootstrap aws://${{ steps.account.outputs.account_id }}/${{ env.AWS_REGION }}
+
+      - name: Verify CDK Installation
+        run: |
+          python -c "import aws_cdk; print('AWS CDK OK')"
 
       - name: CDK Synth
-        run: cdk synth
+        run: |
+          cdk synth
+
+      - name: CDK Diff
+        run: |
+          cdk diff || true
 
       - name: CDK Deploy
-        run: cdk deploy --require-approval never
+        run: |
+          cdk deploy --all --require-approval never
