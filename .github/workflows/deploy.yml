@@ -6,6 +6,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     permissions:
       id-token: write
@@ -29,8 +30,7 @@ jobs:
           node-version: "22"
 
       - name: Install CDK
-        run: |
-          npm install -g aws-cdk
+        run: npm install -g aws-cdk
 
       - name: Install Python Dependencies
         run: |
@@ -45,15 +45,13 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Verify AWS Access
-        run: |
-          aws sts get-caller-identity
+        run: aws sts get-caller-identity
 
       - name: Discover AWS Account
         id: account
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
-          echo "AWS Account: $ACCOUNT_ID"
 
       - name: Check Bootstrap
         id: bootstrap
@@ -70,18 +68,16 @@ jobs:
         run: |
           cdk bootstrap aws://${{ steps.account.outputs.account_id }}/${{ env.AWS_REGION }}
 
-      - name: Verify CDK Installation
-        run: |
-          python -c "import aws_cdk; print('AWS CDK OK')"
-
       - name: CDK Synth
-        run: |
-          cdk synth
-
-      - name: CDK Diff
-        run: |
-          cdk diff || true
+        run: cdk synth
 
       - name: CDK Deploy
         run: |
           cdk deploy --all --require-approval never
+
+      - name: Show CloudFormation Events
+        if: failure()
+        run: |
+          aws cloudformation describe-stack-events \
+            --stack-name MidasBackendStack \
+            --max-items 20

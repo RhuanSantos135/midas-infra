@@ -62,12 +62,12 @@ class BackendStack(Stack):
             public_load_balancer=True,
 
             task_image_options=ecs_patterns.ApplicationLoadBalancedTaskImageOptions(
-                image=ecs.ContainerImage.from_ecr_repository(
-                    repository,
-                    "latest"
+
+                image=ecs.ContainerImage.from_registry(
+                    "public.ecr.aws/nginx/nginx:latest"
                 ),
 
-                container_port=8000,
+                container_port=80,
 
                 environment={
                     "ENVIRONMENT": "production"
@@ -81,6 +81,6 @@ class BackendStack(Stack):
         )
 
         service.target_group.configure_health_check(
-            path="/health",
+            path="/",
             interval=Duration.seconds(30)
         )
